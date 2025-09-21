@@ -3,6 +3,10 @@ clc;
 clear;
 close all;
 
+%% 0. SETTAGGI RAPIDI
+record_video = true;
+trajectory = 'jointSpace'; % 'jointSpace' or 'taskSpace'
+
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
 fprintf('1. Caricamento del robot...\n');
 
@@ -160,7 +164,7 @@ options = odeset('OutputFcn', @(t,y,flag) odeProgressBar(t, y, flag, h_waitbar, 
 % ode45 sia causata dal fatto che per ridurre l'errore ad ogni passo, la
 % funzione vada a ridurre la dimensione di ogni step innumerevoli volte,
 % rendendo così gigantesco il numero di passi.
-[t_sim, x_sim] = ode15s(odefun, [t_start, t_end], x0, options);
+[t_sim, x_sim] = ode15s(odefun, t_traj, x0, options);
 
 % Ottengo le coppie attuate nella simulazione dalla funzione di logging
 [t_tau_logged, tau_logged, tau_ext_logged, M_logged] = getLoggedTorques();
@@ -292,12 +296,13 @@ grid on;
 
 %% Animazione del robot
 
-% video_filename='simulazione_robot2.avi';
-% writerObj = VideoWriter(video_filename);
-% writerObj.FrameRate = 100;
-% writerObj.Quality = 50;
-% open(writerObj);
-
+if record_video
+    video_filename='simulazione_robot.avi';
+    writerObj = VideoWriter(video_filename);
+    writerObj.FrameRate = 100;
+    writerObj.Quality = 50;
+    open(writerObj);
+end
 
 fig_anim = figure('Name', 'Animazione della Dinamica Simulata', 'NumberTitle', 'off');
 show(robot, homeConfiguration(robot));
@@ -309,7 +314,13 @@ plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'Displ
 
 plane_presence = false;
 
-for i = 1:1:length(t_sim)
+if record_video
+    step = 1;
+else
+    step = 20;
+end
+
+for i = 1:step:length(t_sim)
     show(robot, q_sim(:,i), 'PreservePlot', false);
     title(sprintf('Animazione Simulazione - Tempo: %.2f s', t_sim(i)));
     drawnow;
@@ -322,11 +333,16 @@ for i = 1:1:length(t_sim)
         patch(patch_x, patch_y, patch_z, 'g', 'FaceAlpha', 1, 'EdgeColor', 'none', 'DisplayName', 'Piano di Collisione');
         plane_presence=true;
     end
-
-    % frame = getframe(fig_anim);
-    % writeVideo(writerObj,frame);
+    
+    if record_video
+        frame = getframe(fig_anim);
+        writeVideo(writerObj, frame);
+    end
 end
-% close(writerObj);
+
+if record_video
+    close(writerObj);
+end
 
 %% 7.CALCOLO DELL'ENERGIA MECCANICA DEL ROBOT
 fprintf('7. Calcolo dell''energia meccanica lungo la traiettoria...\n');

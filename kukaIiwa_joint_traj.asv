@@ -3,6 +3,10 @@ clc;
 clear;
 close all;
 
+%% 0. SETTAGGI RAPIDI
+record_video = false;
+trajectory = 'jointSpace'; % 'jointSpace' or 'taskSpace'
+
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
 fprintf('1. Caricamento del robot...\n');
 
@@ -188,7 +192,7 @@ M_unique_reshaped = reshape(M_unique, 7*7, length(t_tau_unique));
 M_sim_reshaped = interp1(t_tau_unique, M_unique_reshaped', t_sim)';
 M_sim = reshape(M_sim_reshaped, 7, 7, length(t_sim));
 
-%% Per calcolare la derivata della matrice di inerzia dobbiamo avere come
+% Per calcolare la derivata della matrice di inerzia dobbiamo avere come
 % prima dimensione quella temporale
 M_sim_permuted = permute(M_sim, [3, 1, 2]);
 Md_sim_permuted = gradient(M_sim_permuted);
@@ -212,7 +216,7 @@ tiledlayout(2,1);
 
 % Grafico posizioni
 nexttile;
-plot(t_traj, q_desired', '--', 'LineWidth', 1.5);
+plot(t_traj, q_desired', '--');
 hold on;
 plot(t_sim, q_sim', '-');
 hold off;
@@ -241,7 +245,7 @@ tiledlayout(2,1);
 
 % Grafico Velocità
 nexttile;
-plot(t_traj, qd_desired', '--', 'LineWidth', 1.5);
+plot(t_traj, qd_desired', '--');
 hold on;
 plot(t_sim, qd_sim', '-');
 hold off;
@@ -266,7 +270,7 @@ legend('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7');
 
 % Grafico delle coppie attuate
 figure('Name', 'Coppie Applicate ai Giunti', 'NumberTitle', 'off');
-plot(t_sim, tau_sim', 'LineWidth', 1.5);
+plot(t_sim, tau_sim');
 title('Coppie Totali Applicate ai Giunti (\tau_{ff} + \tau_{pd})');
 xlabel('Tempo (s)');
 ylabel('Coppia (Nm)');
@@ -275,7 +279,7 @@ legend('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7');
 
 % Grafico delle coppie di disturbo
 figure('Name', 'Coppie di disturbo applicate ai Giunti', 'NumberTitle', 'off');
-plot(t_sim, tau_ext_sim', 'LineWidth', 1.5);
+plot(t_sim, tau_ext_sim');
 title('Coppie di disturbo applicate ai Giunti \tau_{ext}');
 xlabel('Tempo (s)');
 ylabel('Coppia (Nm)');
@@ -284,49 +288,52 @@ legend('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7');
 
 % Grafico del residuo calcolato conoscendo tau_ext
 figure('Name', 'Residuo ideale', 'NumberTitle', 'off');
-plot(t_sim, r_sim', 'LineWidth', 1.5);
+plot(t_sim, r_sim');
 title('Residuo calcolato conoscendo \tau_{ext}');
 xlabel('Tempo (s)');
 ylabel('Residuo');
 grid on;
 
 %% Animazione del robot
-% 
-% % video_filename='simulazione_robot2.avi';
-% % writerObj = VideoWriter(video_filename);
-% % writerObj.FrameRate = 100;
-% % writerObj.Quality = 50;
-% % open(writerObj);
-% 
-% 
-% fig_anim = figure('Name', 'Animazione della Dinamica Simulata', 'NumberTitle', 'off');
-% show(robot, homeConfiguration(robot));
-% hold on;
-% axis([-0.5 0.6 -0.5 0.5 0 1.5]);
-% grid on;
-% plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
-% %view(90,0);
-% 
-% plane_presence = false;
-% 
-% for i = 1:1:length(t_sim)
-%     show(robot, q_sim(:,i), 'PreservePlot', false);
-%     title(sprintf('Animazione Simulazione - Tempo: %.2f s', t_sim(i)));
-%     drawnow;
-% 
-%     if t_sim(i)>= 5.0 && plane_presence == false
-%         % Disegniamo un rettangolo per rappresentare il piano
-%         patch_x = [0.5, 0.5, -0.5, -0.5];
-%         patch_z = [0.8, 1.2, 1.2, 0.8];
-%         patch_y = [plane_point(2), plane_point(2), plane_point(2), plane_point(2)];
-%         patch(patch_x, patch_y, patch_z, 'g', 'FaceAlpha', 1, 'EdgeColor', 'none', 'DisplayName', 'Piano di Collisione');
-%         plane_presence=true;
-%     end
-% 
-%     % frame = getframe(fig_anim);
-%     % writeVideo(writerObj,frame);
-% end
-% % close(writerObj);
+
+if record_video
+    video_filename='simulazione_robot.avi';
+    writerObj = VideoWriter(video_filename);
+    writerObj.FrameRate = 100;
+    writerObj.Quality = 50;
+    open(writerObj);
+end
+
+fig_anim = figure('Name', 'Animazione della Dinamica Simulata', 'NumberTitle', 'off');
+show(robot, homeConfiguration(robot));
+hold on;
+axis([-0.5 0.6 -0.5 0.5 0 1.5]);
+grid on;
+plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
+%view(90,0);
+
+plane_presence = false;
+
+if
+
+for i = 1:step:length(t_sim)
+    show(robot, q_sim(:,i), 'PreservePlot', false);
+    title(sprintf('Animazione Simulazione - Tempo: %.2f s', t_sim(i)));
+    drawnow;
+
+    if t_sim(i)>= 5.0 && plane_presence == false
+        % Disegniamo un rettangolo per rappresentare il piano
+        patch_x = [0.5, 0.5, -0.5, -0.5];
+        patch_z = [0.8, 1.2, 1.2, 0.8];
+        patch_y = [plane_point(2), plane_point(2), plane_point(2), plane_point(2)];
+        patch(patch_x, patch_y, patch_z, 'g', 'FaceAlpha', 1, 'EdgeColor', 'none', 'DisplayName', 'Piano di Collisione');
+        plane_presence=true;
+    end
+
+    % frame = getframe(fig_anim);
+    % writeVideo(writerObj,frame);
+end
+% close(writerObj);
 
 %% 7.CALCOLO DELL'ENERGIA MECCANICA DEL ROBOT
 fprintf('7. Calcolo dell''energia meccanica lungo la traiettoria...\n');
@@ -368,21 +375,21 @@ figure('Name', 'Analisi Energetica del Robot', 'NumberTitle', 'off');
 tiledlayout(3,1);
 
 nexttile;
-plot(t_sim, PE_sim, 'b-', 'LineWidth', 1.5, 'DisplayName', 'Energia Potenziale (PE)');
+plot(t_sim, PE_sim, 'b-', 'DisplayName', 'Energia Potenziale (PE)');
 xlabel('Tempo (s)');
 ylabel('Energia (Joule)');
 grid on;
 legend show;
 
 nexttile;
-plot(t_sim, KE_sim, 'r-', 'LineWidth', 1.5, 'DisplayName', 'Energia Cinetica (KE)');
+plot(t_sim, KE_sim, 'r-', 'DisplayName', 'Energia Cinetica (KE)');
 xlabel('Tempo (s)');
 ylabel('Energia (Joule)');
 grid on;
 legend show;
 
 nexttile;
-plot(t_sim, E_total_sim, 'g-', 'LineWidth', 2, 'DisplayName', 'Energia Meccanica (PE+KE)');
+plot(t_sim, E_total_sim, 'g-', 'DisplayName', 'Energia Meccanica (PE+KE)');
 xlabel('Tempo (s)');
 ylabel('Energia (Joule)');
 grid on;
@@ -423,7 +430,7 @@ end
 %% 10. Visualizzazione del residuo
 fprintf("10. Visualizzazione del residuo...\n");
 figure('Name', 'Segnale di Monitoraggio Collisioni', 'NumberTitle', 'off');
-plot(t_sim, r_energy_observer, 'r-', 'LineWidth', 2, 'DisplayName', 'r(t)');
+plot(t_sim, r_energy_observer, 'r-', 'DisplayName', 'r(t)');
 title('Residuo r(t)');
 xlabel('Tempo (s)');
 ylabel('Residuo r(t)');
