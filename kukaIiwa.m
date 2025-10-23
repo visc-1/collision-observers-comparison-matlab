@@ -4,7 +4,7 @@ clear;
 close all;
 
 %% 0. SETTAGGI RAPIDI
-record_video = true;
+record_video = false;
 trajectory = 'jointSpace'; % 'jointSpace' or 'taskSpace'
 
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
@@ -19,81 +19,132 @@ numJoints = numel(robot.homeConfiguration);
 endEffectorName = 'iiwa_link_ee'; % Nome dell'end-effector
 
 
-%% 2. DEFINIZIONE DELLA TRAIETTORIA (SPAZIO GIUNTI)
+%% 2. DEFINIZIONE DELLA TRAIETTORIA
 fprintf('2. Definizione della traiettoria...\n');
+fprintf('Hai selezionato: %s\n', trajectory);
 
-A = [0.5, 0, 0, 1, 0, 0, 0];
-phi = 0;
-T_period = 5.0;             % Tempo per completare un giro [s]
-omega = 2 * pi / T_period;  % Velocità angolare costante [rad/s]
-
+T_period = 5.0;
 t_start = 0;
 t_end = 2*T_period; % Vogliamo compiere due giri
 t_step = 0.01;
 t_traj = t_start:t_step:t_end;
+if strcmp(trajectory,'jointSpace')
+    A = [0.5, 0, 0, 1, 0, 0, 0];
+    phi = 0;
+    omega = 2 * pi / T_period;
 
-% pos = A*sin(omega*t + phi)
-% vel = A*omega*cos(omega*t + phi)
-% acc = -A*omega^2*sin(omega*t + phi)
 
-q_desired = zeros(7, numel(t_traj));
-qd_desired = zeros(7, numel(t_traj));
-qdd_desired = zeros(7, numel(t_traj));
-
-for i = 1:length(t_traj)
-    t = t_traj(i);
-
-    for j = 1:7
-        q_desired(j,i) = A(j) * sin(omega*t + phi);
-        qd_desired(j,i) = A(j)*omega*cos(omega*t + phi);
-        qdd_desired(j,i) = -A(j)*(omega^2)*sin(omega*t + phi);
+    % pos = A*sin(omega*t + phi)
+    % vel = A*omega*cos(omega*t + phi)
+    % acc = -A*omega^2*sin(omega*t + phi)
+    
+    q_desired = zeros(7, numel(t_traj));
+    qd_desired = zeros(7, numel(t_traj));
+    qdd_desired = zeros(7, numel(t_traj));
+    
+    for i = 1:length(t_traj)
+        t = t_traj(i);
+    
+        for j = 1:7
+            q_desired(j,i) = A(j) * sin(omega*t + phi);
+            qd_desired(j,i) = A(j)*omega*cos(omega*t + phi);
+            qdd_desired(j,i) = -A(j)*(omega^2)*sin(omega*t + phi);
+        end
+    
     end
 
+    fprintf('2.1 Calcolo della cinematica diretta...\n');
+
+    cartesian_pose = zeros(4,4, numel(t_traj));
+    
+    h_waitbar_ik = waitbar(0, 'Risoluzione Cinematica diretta...');
+    for i = 1:length(t_traj)
+    
+        cartesian_pose(:,:,i) = getTransform(robot, q_desired(:,i), endEffectorName);
+    
+        if mod(i, 20) == 0
+            waitbar(i/length(t_traj), h_waitbar_ik);
+        end
+    end
+    close(h_waitbar_ik);
+
+    % Estraiamo i punti nello spazio
+    pos_cart = cartesian_pose(1:3, 4, :);
+
+elseif strcmp(trajectory,'taskSpace')
+    center = [0.4, 0, 0.8];     % Centro [x, y, z] [m]
+    radius = 0.1;               % Raggio [m]
+    omega = 2 * pi / T_period;  % Velocità angolare costante [rad/s]
+
+    pos_cart = zeros(2, length(t_traj)); % [y; z]
+
+    for i = 1:length(t_traj)
+        t = t_traj(i);
+        angle = omega * t; % Angolo sulla circonferenza
+    
+        % Posizione
+        pos_cart(1, i) = center(2) + radius * cos(angle); % y(t)
+        pos_cart(2, i) = center(3) + radius * sin(angle); % z(t)
+    end
+    
+    pos_cart = [center(1)*ones(1,length(t_traj));pos_cart]; % Aggiungiamo x(t)
+    
+    % Costruisco la traiettoria in termini di trasformazioni omogenee
+    theta_y = 0; % Possibile rotazione del tool rispetto l'asse y
+    R_y = [cos(theta_y), 0, sin(theta_y); 0 1 0; -sin(theta_y), 0, cos(theta_y)];
+    T_traj = zeros(4,4,length(t_traj));
+    for i = 1:length(t_traj)
+        T_traj(:,:,i) = [R_y, pos_cart(:, i); 0 0 0 1]; % Trasformazione completa
+    end
+    
+    % Cinematica inversa
+    fprintf('2.1. Calcolo della cinematica inversa...\n');
+    ik = inverseKinematics('RigidBodyTree', robot);
+    ik.SolverParameters.AllowRandomRestart = false;
+    weights = [0.25 0.25 0.25 1 1 1]; % Pesi per la cinematica inversa numerica
+    
+    q0 = robot.homeConfiguration;
+    q_desired = zeros(numJoints, length(t_traj));
+    q_prev = q0;
+    
+    h_waitbar_ik = waitbar(0, 'Risoluzione Cinematica Inversa...');
+    for i = 1:length(t_traj)
+        q_sol = ik(endEffectorName, T_traj(:,:,i), weights, q_prev);
+        q_desired(:,i) = q_sol;
+        q_prev = q_sol;
+    
+        if mod(i, 20) == 0
+            waitbar(i/length(t_traj), h_waitbar_ik);
+        end
+    end
+    close(h_waitbar_ik);
+    
+    % Calcola velocità e accelerazioni dei giunti desiderate mediante
+    % derivazione numerica
+    qd_desired = gradient(q_desired, t_step);
+    qdd_desired = gradient(qd_desired, t_step);
+    
+    % Check per vedere se le accelerazioni ottenute numericamente risultano
+    % sporche
+    % figure('Name', 'Accelerazioni desiderate', 'NumberTitle', 'off');
+    % plot(t_traj, qdd_desired', 'LineWidth', 1.5);
+    % title('Accelerazioni desiderate ottenute mediante derivazione numerica');
+    % xlabel('Tempo (s)');
+    % ylabel('Accelerazione (rad/(s^2))');
+    % grid on;
+    % legend('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7');
+else
+    error('Select a jointSpace or taskSpace trajectory...');
 end
 
 %% Opzionale: Visualizzazione del robot nella sua configurazione "home" assieme alla traiettoria definita
-% figure('Name', 'Configurazione Iniziale del Robot', 'NumberTitle', 'off');
-% show(robot, robot.homeConfiguration);
-% title('KUKA LBR iiwa - Configurazione Iniziale');
-% axis([-0.5 1 -0.75 0.75 -0.2 1.5]);
-% hold on;
-% plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
-% legend show;
-
-%% 3. CINEMATICA DIRETTA VISUALIZZAZIONE
-fprintf('3. Calcolo della cinematica diretta...\n');
-
-cartesian_pose = zeros(4,4, numel(t_traj));
-
-h_waitbar_ik = waitbar(0, 'Risoluzione Cinematica diretta...');
-for i = 1:length(t_traj)
-
-    cartesian_pose(:,:,i) = getTransform(robot, q_desired(:,i), endEffectorName);
-
-    if mod(i, 20) == 0
-        waitbar(i/length(t_traj), h_waitbar_ik);
-    end
-end
-close(h_waitbar_ik);
-
-% Estraiamo i punti nello spazio
-pos_cart = cartesian_pose(1:3, 4, :);
-
-% %%
-% figure('Name', 'Animazione della Traiettoria Simulata', 'NumberTitle', 'off');
-% show(robot, homeConfiguration(robot));
-% hold on;
-% axis([-0.5 0.6 -0.5 0.5 0 1.5]);
-% grid on;
-% plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r');
-%view(90,0);
-% %%
-% for i = 1:10:length(t_traj)
-%     show(robot, q_desired(:,i), 'PreservePlot', false);
-%     title(sprintf('Animazione Simulata - Tempo: %.2f s', t_traj(i)));
-%     drawnow;
-% end
-
+figure('Name', 'Configurazione Iniziale del Robot', 'NumberTitle', 'off');
+show(robot, robot.homeConfiguration);
+title('KUKA LBR iiwa - Configurazione Iniziale');
+axis([-0.5 1 -0.75 0.75 -0.2 1.5]);
+hold on;
+plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
+legend show;
 
 %% 4. DEFINIZIONE DEI PARAMETRI UTILI NELLA SIMULAZIONE DINAMICA
 % Durante la simulazione dinamica il braccio robotico viene sottoposto ad
@@ -112,7 +163,13 @@ Kp = diag(100 * ones(1, numJoints)); % Guadagno proporzionale
 Kd = diag(20 * ones(1, numJoints));  % Guadagno derivativo
 
 % Definiamo un piano che rappresenta il contatto umano.
-plane_point = [-0.3; -0.17; 1.1]; % Punto di applicazione del vettore
+
+if strcmp(trajectory,'jointSpace')
+    plane_point = [-0.3; -0.17; 1.1]; % Punto di applicazione del vettore
+elseif strcmp(trajectory,'taskSpace')
+    plane_point = [center(1); -radius*0; center(3)];
+end
+
 plane_normal = [0; 1; 0]; % Vettore normale al piano
 
 % Usiamo come modello di interazione umano-robot un Molla-Smorzatore
@@ -164,7 +221,9 @@ options = odeset('OutputFcn', @(t,y,flag) odeProgressBar(t, y, flag, h_waitbar, 
 % ode45 sia causata dal fatto che per ridurre l'errore ad ogni passo, la
 % funzione vada a ridurre la dimensione di ogni step innumerevoli volte,
 % rendendo così gigantesco il numero di passi.
-[t_sim, x_sim] = ode15s(odefun, t_traj, x0, options);
+
+%[t_sim, x_sim] = ode15s(odefun, t_traj, x0, options);
+[t_sim, x_sim] = ode15s(odefun, [t_start, t_end], x0, options);
 
 % Ottengo le coppie attuate nella simulazione dalla funzione di logging
 [t_tau_logged, tau_logged, tau_ext_logged, M_logged] = getLoggedTorques();
@@ -307,7 +366,14 @@ end
 fig_anim = figure('Name', 'Animazione della Dinamica Simulata', 'NumberTitle', 'off');
 show(robot, homeConfiguration(robot));
 hold on;
-axis([-0.5 0.6 -0.5 0.5 0 1.5]);
+
+if strcmp(trajectory,'jointSpace')
+    axis([-0.5 0.6 -0.5 0.5 0 1.5]);
+elseif strcmp(trajectory,'taskSpace')
+    axis([-0.3 0.6 -0.5 0.5 0 1.2]);
+end
+
+
 grid on;
 plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
 %view(90,0);
@@ -327,9 +393,16 @@ for i = 1:step:length(t_sim)
 
     if t_sim(i)>= 5.0 && plane_presence == false
         % Disegniamo un rettangolo per rappresentare il piano
-        patch_x = [0.5, 0.5, -0.5, -0.5];
-        patch_z = [0.8, 1.2, 1.2, 0.8];
+        if strcmp(trajectory,'jointSpace')
+            patch_x = [0.5, 0.5, -0.5, -0.5];
+            patch_z = [0.8, 1.2, 1.2, 0.8];
+        elseif strcmp(trajectory,'taskSpace')
+            patch_x = [0.3, 0.5, 0.5, 0.3];
+            patch_z = [0.6, 0.6, 1, 1];
+        end
         patch_y = [plane_point(2), plane_point(2), plane_point(2), plane_point(2)];
+
+        
         patch(patch_x, patch_y, patch_z, 'g', 'FaceAlpha', 1, 'EdgeColor', 'none', 'DisplayName', 'Piano di Collisione');
         plane_presence=true;
     end
