@@ -5,7 +5,7 @@ close all;
 
 %% 0. SETTAGGI RAPIDI
 record_video = false;
-trajectory = 'jointSpace'; % 'jointSpace' or 'taskSpace'
+trajectory = 'taskSpace'; % 'jointSpace' or 'taskSpace' or 'stopped'
 
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
 fprintf('1. Caricamento del robot...\n');
@@ -17,7 +17,6 @@ showdetails(robot);
 
 numJoints = numel(robot.homeConfiguration);
 endEffectorName = 'iiwa_link_ee'; % Nome dell'end-effector
-
 
 %% 2. DEFINIZIONE DELLA TRAIETTORIA
 fprintf('2. Definizione della traiettoria...\n');
@@ -133,18 +132,26 @@ elseif strcmp(trajectory,'taskSpace')
     % ylabel('Accelerazione (rad/(s^2))');
     % grid on;
     % legend('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7');
+
+elseif strcmp(trajectory,'stopped')
+    %Stopped1
+    q_desired = [0*ones(1,numel(t_traj)); 0*ones(1,numel(t_traj));
+        0*ones(1,numel(t_traj)); -1.57*ones(1,numel(t_traj)); 0.0*ones(1,numel(t_traj));
+        0*ones(1,numel(t_traj)); 0.0*ones(1,numel(t_traj))];
+    qd_desired = zeros(7,numel(t_traj));
+    qdd_desired = zeros(7,numel(t_traj));
 else
-    error('Select a jointSpace or taskSpace trajectory...');
+    error('Select a trajectory from the list...');
 end
 
 %% Opzionale: Visualizzazione del robot nella sua configurazione "home" assieme alla traiettoria definita
 figure('Name', 'Configurazione Iniziale del Robot', 'NumberTitle', 'off');
-show(robot, robot.homeConfiguration);
+show(robot, q_desired(:,1));
 title('KUKA LBR iiwa - Configurazione Iniziale');
 axis([-0.5 1 -0.75 0.75 -0.2 1.5]);
 hold on;
-plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
-legend show;
+% plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
+% legend show;
 
 %% 4. DEFINIZIONE DEI PARAMETRI UTILI NELLA SIMULAZIONE DINAMICA
 % Durante la simulazione dinamica il braccio robotico viene sottoposto ad
@@ -167,7 +174,9 @@ Kd = diag(20 * ones(1, numJoints));  % Guadagno derivativo
 if strcmp(trajectory,'jointSpace')
     plane_point = [-0.3; -0.17; 1.1]; % Punto di applicazione del vettore
 elseif strcmp(trajectory,'taskSpace')
-    plane_point = [center(1); -radius*0; center(3)];
+    plane_point = [center(1); -radius*0.7; center(3)];
+else
+    plane_point = [0;0;0];
 end
 
 plane_normal = [0; 1; 0]; % Vettore normale al piano
@@ -178,11 +187,13 @@ C_human = 100;  % Smorzamento [Ns/m]
 
 % Nome del corpo che entra in collisione e sul quale verrà applicata la
 % forza
-body_name_for_collision = endEffectorName;
-
+if strcmp(trajectory,'stopped')
+    body_name_for_collision = 'iiwa_link_4';
+else
+    body_name_for_collision = endEffectorName;
+end
 % guadagno del residuo
 k0 = 25;
-
 
 %% 5. SIMULAZIONE CON DINAMICA DIRETTA IN ANELLO CHIUSO
 fprintf('5. Simulazione della dinamica diretta in anello chiuso...\n');
@@ -197,7 +208,7 @@ x0 = [q_desired(:,1); qd_desired(:,1); 0];
 [odefun, getLoggedTorques] = createDynamicsWithLogging(robot, ...
                                  t_traj, q_desired, qd_desired, qdd_desired, ...
                                  Kp, Kd, ...
-                                 body_name_for_collision, plane_point, plane_normal, K_human, C_human, k0);
+                                 body_name_for_collision, trajectory, plane_point, plane_normal, K_human, C_human, k0);
 
 
 % Variabili per la waitbar della simulazione
@@ -212,7 +223,7 @@ abs_tol = 1e-7; % Tolleranza assoluta (più stretta del default 1e-6)
 % Specifichiamo che la funzione 'odeProgressBar' deve essere chiamata
 % durante l'esecuzione.
 options = odeset('OutputFcn', @(t,y,flag) odeProgressBar(t, y, flag, h_waitbar, t_final), ...
-    'RelTol',rel_tol, 'AbsTol',abs_tol);
+    'RelTol',rel_tol, 'AbsTol',abs_tol, 'MaxStep', 0.01);
 
 % Risolvo le ODE per ottenere la dinamica simulata. Ho utilizzato ode15s in
 % quanto anche se prevede l'utilizzo di metodi impliciti, il tempo
@@ -265,6 +276,11 @@ r_sim = x_sim(:, end:end);
 
 fprintf('Simulazione completata.\n');
 
+%% Preparazioni variabili per simulink
+q_simulink = [t_sim, q_sim'];
+qd_simulink = [t_sim, qd_sim'];
+tau_simulink = [t_sim, tau_sim'];
+Md_simulink = timeseries(Md_sim, t_sim);
 
 %% 6. VISUALIZZAZIONE E CONFRONTO DEI RISULTATI
 fprintf('6. Visualizzazione dei risultati...\n');
@@ -345,6 +361,21 @@ ylabel('Coppia (Nm)');
 grid on;
 legend('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7');
 
+% Grafico delle coppie di disturbo (Dettaglio per Giunto)
+figure('Name', 'Coppie di disturbo per Giunto', 'NumberTitle', 'off');
+% Creiamo un layout 4x2 (8 spazi totali, ne useremo 7)
+tl = tiledlayout(4, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+title(tl, 'Coppie di disturbo stimate \tau_{ext} per singolo giunto');
+xlabel(tl, 'Tempo (s)');
+ylabel(tl, 'Coppia (Nm)');
+for i = 1:7
+    nexttile;
+    % tau_ext_sim è una matrice 7xN, quindi prendiamo la riga i-esima
+    plot(t_sim, tau_ext_sim(i, :), 'LineWidth', 1);
+    title(sprintf('Giunto %d', i));
+    grid on;
+end
+
 % Grafico del residuo calcolato conoscendo tau_ext
 figure('Name', 'Residuo ideale', 'NumberTitle', 'off');
 plot(t_sim, r_sim');
@@ -354,6 +385,8 @@ ylabel('Residuo');
 grid on;
 
 %% Animazione del robot
+
+q_video = interp1(t_sim, q_sim', t_traj)';
 
 if record_video
     video_filename='simulazione_robot.avi';
@@ -369,15 +402,16 @@ hold on;
 
 if strcmp(trajectory,'jointSpace')
     axis([-0.5 0.6 -0.5 0.5 0 1.5]);
-elseif strcmp(trajectory,'taskSpace')
+elseif strcmp(trajectory,'taskSpace') || strcmp(trajectory,'stopped')
     axis([-0.3 0.6 -0.5 0.5 0 1.2]);
 end
 
 
 grid on;
-plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
+if ~strcmp(trajectory,'stopped')
+    plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
 %view(90,0);
-
+end
 plane_presence = false;
 
 if record_video
@@ -386,25 +420,27 @@ else
     step = 20;
 end
 
-for i = 1:step:length(t_sim)
-    show(robot, q_sim(:,i), 'PreservePlot', false);
-    title(sprintf('Animazione Simulazione - Tempo: %.2f s', t_sim(i)));
+for i = 1:step:length(t_traj)
+    show(robot, q_video(:,i), 'PreservePlot', false);
+    title(sprintf('Animazione Simulazione - Tempo: %.2f s', t_traj(i)));
     drawnow;
-
-    if t_sim(i)>= 5.0 && plane_presence == false
-        % Disegniamo un rettangolo per rappresentare il piano
-        if strcmp(trajectory,'jointSpace')
-            patch_x = [0.5, 0.5, -0.5, -0.5];
-            patch_z = [0.8, 1.2, 1.2, 0.8];
-        elseif strcmp(trajectory,'taskSpace')
-            patch_x = [0.3, 0.5, 0.5, 0.3];
-            patch_z = [0.6, 0.6, 1, 1];
+    
+    if ~strcmp(trajectory, 'stopped')
+        if t_traj(i)>= 5.0 && plane_presence == false
+            % Disegniamo un rettangolo per rappresentare il piano
+            if strcmp(trajectory,'jointSpace')
+                patch_x = [0.5, 0.5, -0.5, -0.5];
+                patch_z = [0.8, 1.2, 1.2, 0.8];
+            elseif strcmp(trajectory,'taskSpace')
+                patch_x = [0.3, 0.5, 0.5, 0.3];
+                patch_z = [0.6, 0.6, 1, 1];
+            end
+            patch_y = [plane_point(2), plane_point(2), plane_point(2), plane_point(2)];
+    
+            
+            patch(patch_x, patch_y, patch_z, 'g', 'FaceAlpha', 1, 'EdgeColor', 'none', 'DisplayName', 'Piano di Collisione');
+            plane_presence=true;
         end
-        patch_y = [plane_point(2), plane_point(2), plane_point(2), plane_point(2)];
-
-        
-        patch(patch_x, patch_y, patch_z, 'g', 'FaceAlpha', 1, 'EdgeColor', 'none', 'DisplayName', 'Piano di Collisione');
-        plane_presence=true;
     end
     
     if record_video
@@ -442,7 +478,7 @@ for i = 1:length(t_sim)
     KE_sim(i) = 0.5 * qd' * M * qd;
 
     % Aggiorno la waitbar
-    if mod(i, 20) == 0
+    if mod(i, 20) == 0tau_d = [0.5;1;-0.3;0;0;0;0];
         waitbar(i/length(t_sim), h_waitbar_ke);
     end
 end
@@ -466,7 +502,7 @@ legend show;
 nexttile;
 plot(t_sim, KE_sim, 'r-', 'DisplayName', 'Energia Cinetica (KE)');
 xlabel('Tempo (s)');
-ylabel('Energia (Joule)');
+ylabel('Energia (Joule)');tau_d = [0.5;1;-0.3;0;0;0;0];
 grid on;
 legend show;
 
@@ -523,14 +559,9 @@ ylabel('Residuo r(t)');
 grid on;
 legend show;
 
-%% 11. Preparazioni variabili per simulink
-q_simulink = [t_sim, q_sim'];
-qd_simulink = [t_sim, qd_sim'];
-tau_simulink = [t_sim, tau_sim'];
-Md_simulink = timeseries(Md_sim, t_sim);
 %% FUNZIONI AUSILIARIE
 function [odefun, getLogData] = createDynamicsWithLogging(robot, t_traj, q_des, qd_des, qdd_des, Kp, Kd, ...
-                                                           body_name, plane_point, plane_normal, K, C, K_res)
+                                                           body_name, trajectory, plane_point, plane_normal, K, C, K_res)
     % variabili di logging
     t_log = [];
     tau_applied_log = [];
@@ -574,42 +605,50 @@ function [odefun, getLogData] = createDynamicsWithLogging(robot, t_traj, q_des, 
         f_ext = zeros(6, robot.NumBodies);
         human_presence_start = 5;
         human_presence_end = 10;
+        impulse_start = 5;
+        impulse_end = 5.05;
+        tau_impulse = [0;0;0;0;0;0;0];
 
-        if t>=human_presence_start && t<=human_presence_end
-
-            % Ottengo posizione e velocità attuali dell'ee
-            T_ee = getTransform(robot, q_real, body_name);
-            pos_ee = T_ee(1:3, 4);
-
-            J = geometricJacobian(robot, q_real, body_name);
-            vel_ee_twist = J * qd_real; % [angolare; lineare]
-            vel_ee_linear = vel_ee_twist(4:6);
-
-            % La distanza rispetto al piano è data dal prodotto scalare tra il
-            % vettore che collega il punto del piano all'ee e il vettore
-            % normale al piano
-            penetration_depth = -dot(pos_ee - plane_point, plane_normal);
-
-            if penetration_depth > 0
-                vel_normal_component = dot(vel_ee_linear, plane_normal);
-
-                % Calcolo la forza usando Massa-Smorzatore (solo in compressione)
-                force_magnitude = K*penetration_depth + C*vel_normal_component;
-                force_magnitude = max(0, force_magnitude); % Per assicurarmi sia solo in compressione
-
-                force_vector = force_magnitude * plane_normal;
-
-                wrench_vector = [0; 0; 0; force_vector(1); force_vector(2); force_vector(3)];
-
-                f_ext = externalForce(robot, body_name, wrench_vector, q_real);
-
+        if strcmp(trajectory,'stopped') && t>=impulse_start && t<=impulse_end
+            tau_impulse = [0.5;1;-0.3;0;0;0;0];
+            %tau_impulse = [0;0;3;0;0;0;0];
+        else
+            if t>=human_presence_start && t<=human_presence_end
+                
+                    % Ottengo posizione e velocità attuali del punto di contatto
+                    T_cp = getTransform(robot, q_real, body_name);
+                    pos_cp = T_cp(1:3, 4);
+        
+                    J = geometricJacobian(robot, q_real, body_name);
+                    vel_cp_twist = J * qd_real; % [angolare; lineare]
+                    vel_cp_linear = vel_cp_twist(4:6);
+        
+                    % La distanza rispetto al piano è data dal prodotto scalare tra il
+                    % vettore che collega il punto del piano all'ee e il vettore
+                    % normale al piano
+                    penetration_depth = -dot(pos_cp - plane_point, plane_normal);
+        
+                    if penetration_depth > 0
+                        vel_normal_component = dot(vel_cp_linear, plane_normal);
+        
+                        % Calcolo la forza usando Massa-Smorzatore (solo in compressione)
+                        force_magnitude = K*penetration_depth + C*vel_normal_component;
+                        force_magnitude = max(0, force_magnitude); % Per assicurarmi sia solo in compressione
+        
+                        force_vector = force_magnitude * plane_normal;
+        
+                        wrench_vector = [0; 0; 0; force_vector(1); force_vector(2); force_vector(3)];
+        
+                        f_ext = externalForce(robot, body_name, wrench_vector, q_real);
+        
+                    end
+    
             end
-
         end
     
         % Calcola l'accelerazione risultante usando la dinamica diretta con
         % la coppia totale e l'eventuale forza esterna causata dall'impatto
-        qdd_real = forwardDynamics(robot, q_real, qd_real, tau_applied, f_ext);
+        qdd_real = forwardDynamics(robot, q_real, qd_real, tau_applied+tau_impulse, f_ext);
 
         M = massMatrix(robot, q_real);
         C_qd = velocityProduct(robot,q_real, qd_real);
