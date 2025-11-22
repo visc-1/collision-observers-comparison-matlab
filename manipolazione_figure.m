@@ -3,8 +3,11 @@ close all;
 clc;
 
 % --- PARAMETRI GRAFICI ---
-mio_xlim = [4.98, 5.2];   % Limiti asse X
-mio_ylim = [-0.5, 1.2];   % Limiti asse Y (Attenzione: unità diverse potrebbero richiedere scale diverse!)
+mio_xlim = [4.98, 5.20];
+mio_ylim = [-0.5, 1.2]; 
+%taskSpace
+%mio_xlim = [6, 9];   % Limiti asse X
+%mio_ylim = [-15, 15];   % Limiti asse Y (Attenzione: unità diverse potrebbero richiedere scale diverse!)
 mio_linewidth = 1.5;      % Spessore linea desiderato
 
 % Definisco la palette di colori standard (es. i 7 colori standard di MATLAB)
@@ -76,7 +79,11 @@ for i = 1:length(figs_sorgente)
     
     % Nota: Applicare lo stesso YLim a grafici con unità diverse (Nm, Joule, rad/s)
     % potrebbe renderne alcuni illeggibili. Se succede, commenta la riga sotto.
-    ylim(ax_dest, mio_ylim); 
+    if i == 2
+        ylim(ax_dest, mio_ylim/5); 
+    else
+        ylim(ax_dest, mio_ylim); 
+    end
     
     % Titoli e griglia
     if ~isempty(ax_src.Title.String)

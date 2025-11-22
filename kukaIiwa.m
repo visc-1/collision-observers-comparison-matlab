@@ -5,7 +5,7 @@ close all;
 
 %% 0. SETTAGGI RAPIDI
 record_video = false;
-trajectory = 'taskSpace'; % 'jointSpace' or 'taskSpace' or 'stopped'
+trajectory = 'stopped'; % 'jointSpace' or 'taskSpace' or 'stopped'
 
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
 fprintf('1. Caricamento del robot...\n');
@@ -145,7 +145,7 @@ else
 end
 
 %% Opzionale: Visualizzazione del robot nella sua configurazione "home" assieme alla traiettoria definita
-figure('Name', 'Configurazione Iniziale del Robot', 'NumberTitle', 'off');
+figure('Name', 'Configurazione Iniziale del Robot', 'NumberTitle', 'off', 'Color', 'w');
 show(robot, q_desired(:,1));
 title('KUKA LBR iiwa 7 - Configurazione Iniziale');
 if strcmp(trajectory,'jointSpace')
@@ -154,9 +154,10 @@ elseif strcmp(trajectory,'taskSpace') || strcmp(trajectory,'stopped')
     axis([-0.3 0.6 -0.5 0.5 0 1.2]);
 end
 hold on;
-plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
-%legend show;
-
+if ~strcmp(trajectory,'stopped')
+    plot3(pos_cart(1,:), pos_cart(2,:), pos_cart(3,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Traiettoria Desiderata');
+    %legend show;
+end
 %% 4. DEFINIZIONE DEI PARAMETRI UTILI NELLA SIMULAZIONE DINAMICA
 % Durante la simulazione dinamica il braccio robotico viene sottoposto ad
 % una coppia di feedback generata da un controllore PD. Questo ci permette
@@ -197,7 +198,7 @@ else
     body_name_for_collision = endEffectorName;
 end
 % guadagno del residuo
-k0 = 25;
+k0 = 100;
 
 %% 5. SIMULAZIONE CON DINAMICA DIRETTA IN ANELLO CHIUSO
 fprintf('5. Simulazione della dinamica diretta in anello chiuso...\n');
