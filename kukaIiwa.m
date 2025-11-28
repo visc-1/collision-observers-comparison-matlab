@@ -4,8 +4,8 @@ clear;
 close all;
 
 %% 0. SETTAGGI RAPIDI
-record_video = false;
-trajectory = 'stopped'; % 'jointSpace' or 'taskSpace' or 'stopped'
+record_video = true;
+trajectory = 'taskSpace'; % 'jointSpace' or 'taskSpace' or 'stopped'
 
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
 fprintf('1. Caricamento del robot...\n');
