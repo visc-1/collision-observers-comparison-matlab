@@ -4,7 +4,7 @@ clear;
 close all;
 
 %% 0. SETTAGGI RAPIDI
-record_video = true;
+record_video = false;
 trajectory = 'taskSpace'; % 'jointSpace' or 'taskSpace' or 'stopped'
 
 %% 1. SETUP E IMPORTAZIONE DEL ROBOT
